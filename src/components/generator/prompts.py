@@ -1,3 +1,4 @@
+import json
 from langchain_core.messages import SystemMessage, HumanMessage
 
 
@@ -101,6 +102,74 @@ def build_filter_extraction_messages(
     ))
 
     return [system_msg, human_msg]
+
+
+def build_query_rewrite_messages(
+    db_context,
+    query: str,
+    conversation_context: str = None,
+) -> list:
+    """
+    Build [SystemMessage, HumanMessage] for the single-call query rewriter.
+
+    Performs normalisation, expansion, reference resolution and cross-lingual terminology
+    rewriting in one LLM call, informed by per-project db_context.
+
+    Args:
+        db_context: rewriter.db_context.DBContext (abstract, glossary, target_language)
+        query: raw user query (current turn)
+        conversation_context: optional prior turns (USER/ASSISTANT transcript)
+
+    Returns:
+        [SystemMessage, HumanMessage]. The LLM is expected to return JSON of shape
+        {"query_rewrite": "...", "notes": {...}}.
+    """
+    raw_flag = not db_context.abstract.strip() and not db_context.glossary
+
+    # Instructions
+    system_lines = [
+        "You are a query rewriter for a retrieval-augmented generation system.",
+        "Your job is to produce a single rewritten query that improves vector-store retrieval.",
+        "",
+        "Tasks (apply only when warranted by the input):",
+        "  1. Abbreviation & term normalisation — expand acronyms and canonicalise entities against the glossary.",
+        "  2. Pronoun & reference resolution — resolve pronouns to full entity names and elided references against the conversation history.",
+        "  3. Query expansion & completion — identify implicit intent and emphasise explicitly; fill in elided context.",
+        "  4. Language & style normalisation — translate into the target language if set; strip filler, emotion, and rhetorical phrasing; rewrite into a declarative search target.",
+        "",
+        "Rules:",
+        "  - Preserve the user's original intent. Do not invent facts. Do not contradict the original query.",
+        "  - Use the glossary as the source of truth for term normalisation. Do not rewrite terms that are not covered by the glossary or clearly redundant filler.",
+        "  - If unsure, return the original query unchanged.",
+        "  - Return ONLY a valid JSON object, no markdown fences, no explanation.",
+        '  - Output schema: {"query_rewrite": "<string>", "notes": {"scenarios_applied": [<list of scenario numbers>], "glossary_terms_used": [<canonical terms>], "detected_language": "<iso code or null>"}}',
+    ]
+    if raw_flag:
+        system_lines.append(
+            "  - CONSERVATIVE MODE: no DB abstract or glossary is configured. Do NOT expand acronyms or domain terms. "
+            "Limit yourself to pronoun resolution, filler stripping, and language normalisation."
+        )
+
+    system_msg = SystemMessage(content="\n".join(system_lines))
+
+    # Now the background info
+    context_blocks = []
+    if db_context.abstract.strip():
+        context_blocks.append(f"### DB ABSTRACT\n{db_context.abstract.strip()}")
+    if db_context.glossary:
+        context_blocks.append(f"### GLOSSARY\n{json.dumps(db_context.glossary, ensure_ascii=False)}")
+    if db_context.target_language:
+        context_blocks.append(f"### TARGET LANGUAGE\n{db_context.target_language}")
+    if conversation_context:
+        context_blocks.append(f"### CONVERSATION HISTORY\n{conversation_context}")
+    context_blocks.append(f"### CURRENT QUERY\n{query}")
+    context_blocks.append(
+        "Rewrite the CURRENT QUERY following the rules above and return the JSON object."
+    )
+
+    context_msg = HumanMessage(content="\n\n".join(context_blocks))
+
+    return [system_msg, context_msg]
 
 
 def build_messages(system_prompt: str, question: str, context: str, conversation_context: str = None) -> list:

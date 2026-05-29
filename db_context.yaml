@@ -1,0 +1,22 @@
+# DBContext for the ChaBo query rewriter.
+# This should be populated per-project to ground the LLM in the project domain
+# BUT... it is optional. Without it the rewriter will do basic rewriting. 
+
+# ABSTRACT
+# Short natural-language description of what's in the document store (domain, scope, time period, document types).
+abstract: ""
+
+# GLOSSARY
+# Each entry is a mapping with:
+#   - canonical:  canonical term to rewrite into
+#   - aliases:    list of acronyms / synonyms / variant spellings
+#   - definition: optional short gloss for the LLM
+# Example:
+#   - canonical: "Egyptian Ministry of Agriculture and Land Reclamation"
+#     aliases: ["MALR", "Ministry of Agriculture"]
+#     definition: "Egyptian government body responsible for agricultural policy."
+glossary: []
+
+# ISO code for the document store's language (e.g. "ar" for Arabic, "en" for English). Rewriter translates source language queries into this.
+# Leave null to disable cross-lingual rewriting.
+target_language: null

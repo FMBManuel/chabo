@@ -11,3 +11,6 @@ chabo_env/
 CLAUDE.md
 tests/eval/results/
 tests/health/logs/
+EVAL_PLAN.md
+query_rewriting_testdata.json
+test_rewrite_query.py
