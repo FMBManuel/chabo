@@ -44,6 +44,7 @@ def _build_qdrant_filter(filters: Dict[str, Any]) -> Optional[rest.Filter]:
 def _format_hit(hit) -> Dict[str, Any]:
     """Format a Qdrant ScoredPoint into the standard retriever result dict."""
     return {
+        "id": hit.id, # added for query rewrite eval
         "answer": hit.payload.get("text", hit.payload.get("page_content", "")),
         "answer_metadata": hit.payload.get("metadata", {}),
         "score": hit.score
