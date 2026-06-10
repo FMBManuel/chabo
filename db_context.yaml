@@ -17,6 +17,3 @@ abstract: ""
 #     definition: "Egyptian government body responsible for agricultural policy."
 glossary: []
 
-# ISO code for the document store's language (e.g. "ar" for Arabic, "en" for English). Rewriter translates source language queries into this.
-# Leave null to disable cross-lingual rewriting.
-target_language: null
