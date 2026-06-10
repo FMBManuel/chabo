@@ -54,9 +54,6 @@ DB_CONTEXT_PATH = config.get("query_rewriter", "db_context_path", fallback="db_c
 db_context: DBContext = DBContext() # instantiating a typed object here for potential future use (e.g. with metadata filter node)
 if REWRITER_ENABLED:
     db_context = load_db_context(DB_CONTEXT_PATH)
-    target_language = config.get("query_rewriter", "target_language", fallback="").strip().strip("\"'").strip()
-    if target_language:
-        db_context.target_language = target_language
     if not db_context.abstract.strip():
         logger.warning(
             f"Query rewriter: db_context.abstract is empty - running in conservative mode \

@@ -2,11 +2,10 @@
 DBContext loader for the query rewriter (+ any other future dependent modules)
 
 Loads a per-deployment YAML artifact containing an abstract describing the doc store and a glossary.
-(target_language is NOT loaded from the YAML — it is set from params.cfg in main.py.)
 """
 import logging
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -18,8 +17,6 @@ class DBContext(BaseModel):
     """Per-deployment database-awareness object for the query rewriter."""
     abstract: str = ""
     glossary: List[Dict[str, Any]] = Field(default_factory=list)
-    # Runtime carrier only — populated from params.cfg in main.py, never from the YAML artifact.
-    target_language: Optional[str] = None
 
     @property
     def is_empty(self) -> bool:
@@ -48,5 +45,7 @@ def load_db_context(path: str) -> DBContext:
     if not isinstance(data, dict):
         raise ValueError(f"DBContext YAML at {path} must be a mapping at the top level, got {type(data).__name__}")
 
+    # Deal with malformed db_context null values
+    data = {k: v for k, v in data.items() if v is not None}
 
     return DBContext(**data)
