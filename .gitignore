@@ -14,5 +14,4 @@ tests/health/logs/
 EVAL_PLAN.md
 query_rewriting_testdata.json
 test_rewrite_query.py
-db_context.yaml.bak
-params.cfg
+*.bak
