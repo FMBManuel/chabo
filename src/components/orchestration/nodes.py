@@ -11,13 +11,14 @@ from typing import TYPE_CHECKING, Dict, Any, Optional
 from langchain_core.documents import Document
 from .telemetry import extract_retriever_telemetry
 from components.ingestor.ingestor import process_document
-from components.generator.prompts import build_filter_extraction_messages
+from components.generator.prompts import build_filter_extraction_messages, build_query_rewrite_messages
 
 # Assuming these Type definitions are available from state.py and retriever_orchestrator.py
 if TYPE_CHECKING:
     from components.retriever.retriever_orchestrator import ChaBoHFEndpointRetriever
     from components.generator.generator_orchestrator import Generator
     from components.orchestration.state import GraphState
+    from components.rewriter.db_context import DBContext
 
 
 
@@ -38,7 +39,9 @@ async def retrieve_node(
     # 1. Extract Query and Filters
     filters = state.get("metadata_filters")
     metadata = state.get("metadata", {})
-    logger.info(f"Retrieval: {state['query'][:50]}...")
+    # Prefer rewritten query when present; falls back to raw query when rewriter is disabled or pass-through.
+    query = state.get("query_rewrite") or state["query"]
+    logger.info(f"Retrieval: {query[:50]}...")
 
     raw_documents: list[Document] = []
 
@@ -48,7 +51,7 @@ async def retrieve_node(
             retriever_kwargs['filters'] = filters
 
         raw_documents = await retriever.ainvoke(
-            input=state['query'],
+            input=query,
             **retriever_kwargs
         )
 
@@ -263,7 +266,8 @@ async def extract_filters_node(
         logger.info("extract_filters_node: no filterable_fields configured, skipping")
         return {}
 
-    query = state.get("query", "")
+    # Prefer rewritten query when present; falls back to raw query when rewriter is disabled or pass-through.
+    query = state.get("query_rewrite") or state.get("query", "")
     user_messages_history = state.get("user_messages_history") or "(none)"
 
     try:
@@ -280,6 +284,136 @@ async def extract_filters_node(
         logger.info("extract_filters_node: no filters found in query or history")
 
     return {"metadata_filters": filters}
+
+
+def _parse_rewrite_response(raw_response: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse and validate LLM query-rewrite response.
+
+    Expected schema:
+        {"query_rewrite": "<string>", "notes": {...}}
+
+    Returns the dict with a non-empty 'query_rewrite' string, or None on any
+    parse / shape failure. Caller falls back to pass-through on None.
+    """
+    try:
+        cleaned = raw_response.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, dict):
+            return None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    rewritten = parsed.get("query_rewrite")
+    if not isinstance(rewritten, str) or not rewritten.strip():
+        return None
+
+    notes = parsed.get("notes")
+    if not isinstance(notes, dict):
+        notes = {}
+
+    return {"query_rewrite": rewritten.strip(), "notes": notes}
+
+
+async def rewrite_query_node(
+    state: "GraphState",
+    generator: "Generator",
+    db_context: "DBContext",
+    *,
+    writer,
+) -> "GraphState":
+    """
+    Node to rewrite user query.
+
+    Single LLM call for rewriting backed by db_context
+    On failure falls back to pass-through:
+    `query_rewrite == query` and `rewriter_fallback_used = True`. 
+
+    Emits a 'query_rewritten' custom event for observability.
+    """
+    start_time = datetime.now()
+    metadata = state.get("metadata", {})
+
+    original_query = state.get("query", "") or ""
+    conversation_context = state.get("conversation_context")
+
+    # Empty/trivial query results in pass-through.
+    if not original_query.strip():
+        logger.info("rewrite_query_node: empty query, skipping")
+        return {
+            "query_rewrite": original_query,
+            "rewriter_fallback_used": True,
+            "rewriter_notes": {"reason": "empty_query"},
+        }
+
+    try:
+        messages = build_query_rewrite_messages(db_context, original_query, conversation_context)
+        raw = await generator._call_llm(messages)
+        parsed = _parse_rewrite_response(raw)
+    except Exception as e:
+        duration = (datetime.now() - start_time).total_seconds()
+        logger.warning(f"rewrite_query_node: LLM call failed ({e}); falling back to original query")
+        metadata.update({
+            "rewrite_duration": duration,
+            "rewrite_success": False,
+            "rewrite_error": str(e),
+        })
+        return {
+            "query_rewrite": original_query,
+            "rewriter_fallback_used": True,
+            "rewriter_notes": {"reason": "llm_error"},
+            "metadata": metadata,
+        }
+
+    duration = (datetime.now() - start_time).total_seconds()
+
+    if parsed is None:
+        logger.warning("rewrite_query_node: parse failed; falling back to original query")
+        metadata.update({
+            "rewrite_duration": duration,
+            "rewrite_success": False,
+            "rewrite_error": "parse_failed",
+        })
+        return {
+            "query_rewrite": original_query,
+            "rewriter_fallback_used": True,
+            "rewriter_notes": {"reason": "parse_failed"},
+            "metadata": metadata,
+        }
+
+    rewritten = parsed["query_rewrite"]
+    notes = parsed["notes"]
+
+    logger.info(
+        f"rewrite_query_node: rewrote in {duration:.2f}s | "
+        f"orig: {original_query[:60]!r} → rewrite: {rewritten[:60]!r}"
+    )
+
+    metadata.update({
+        "rewrite_duration": duration,
+        "rewrite_success": True,
+    })
+
+    # Observability event
+    try:
+        writer({
+            "event": "query_rewritten",
+            "data": {
+                "original": original_query,
+                "rewrite": rewritten,
+                "notes": notes,
+            },
+        })
+    except Exception:
+        # writer may not be available in some test contexts; non-fatal.
+        pass
+
+    return {
+        "query_rewrite": rewritten,
+        "rewriter_fallback_used": False,
+        "rewriter_notes": notes,
+        "metadata": metadata,
+    }
 
 
 # from .state import GraphState

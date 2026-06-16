@@ -16,6 +16,7 @@ from components.orchestration.ui_adapters import chatui_adapter, chatui_file_ada
 from components.orchestration.state import ChatUIInput, ChatUIFileInput
 from components.utils import getconfig
 from components.retriever.filters import FILTER_VALUES
+from components.rewriter.db_context import load_db_context, DBContext
 from typing import Dict
 
 config = getconfig("params.cfg")
@@ -46,13 +47,32 @@ if FILTERABLE_FIELDS:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Query rewriter config (optional — defaults to disabled if section is absent)
+REWRITER_ENABLED = config.getboolean("query_rewriter", "enabled", fallback=False)
+DB_CONTEXT_PATH = config.get("query_rewriter", "db_context_path", fallback="db_context.yaml")
+
+db_context: DBContext = DBContext() # instantiating a typed object here for potential future use (e.g. with metadata filter node)
+if REWRITER_ENABLED:
+    db_context = load_db_context(DB_CONTEXT_PATH)
+    if not db_context.abstract.strip():
+        logger.warning(
+            f"Query rewriter: db_context.abstract is empty - running in conservative mode \
+             (no glossary-based expansion). Populate {DB_CONTEXT_PATH} to ground the rewriter.")
+
 # Initialize services
 logger.info("Initializing ChaBoHFEndpointRetriever and Generator...")
 retriever_instance = create_retriever_from_config(config_file="params.cfg")
 generator_instance = Generator()
 
 # Build the LangGraph workflow
-compiled_graph = build_workflow(retriever_instance, generator_instance, filterable_fields=FILTERABLE_FIELDS, filter_values=FILTER_VALUES)
+compiled_graph = build_workflow(
+    retriever_instance,
+    generator_instance,
+    filterable_fields=FILTERABLE_FIELDS,
+    filter_values=FILTER_VALUES,
+    db_context=db_context if REWRITER_ENABLED else None,
+    rewriter_enabled=REWRITER_ENABLED,
+)
 
 
 #----------------------------------------

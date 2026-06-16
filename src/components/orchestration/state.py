@@ -25,6 +25,9 @@ class GraphState(TypedDict, total=False):
     user_messages_history: Optional[str]  # User-turn-only history for filter extraction (no assistant responses)
     applied_filters: Optional[Dict[str, Any]]  # Actual filters used after AND-safeguard fallback
     filters_narrowed: Optional[bool]  # True if AND safeguard fired and fell back to priority field
+    query_rewrite: Optional[str]  # Rewritten query produced by rewrite_query_node; downstream nodes prefer it over `query`
+    rewriter_fallback_used: Optional[bool]  # True if the rewriter degraded to pass-through (LLM error / empty / parse fail)
+    rewriter_notes: Optional[Dict[str, Any]]  # Observability: scenarios applied, glossary terms used, detected language
 
 class Message(BaseModel):
     """Single message in conversation history"""
